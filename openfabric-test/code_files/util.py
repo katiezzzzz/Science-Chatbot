@@ -1,23 +1,17 @@
-import torch.nn.functional as F
-import matplotlib.pyplot as plt
-from dotenv import load_dotenv
-from torch import autograd
-from tqdm import tqdm
-from torch import nn
-import numpy as np
-import subprocess
-import warnings
-import torch
-import wandb
-import os
-import nltk
-import string
-from nltk.stem.lancaster import LancasterStemmer
-import random
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
+import matplotlib.pyplot as plt
+from torch import nn
+import numpy as np
+import warnings
+import string
+import random
 import timeit
 import pickle
+import torch
+import json
+import nltk
+import os
 
 PATH = os.path.dirname(os.path.realpath(__file__))
 
@@ -99,43 +93,117 @@ def greet(sentence):
     for word in sentence.split():
         if word.lower() in greet_inputs:
             return random.choice(greet_responses)
+
+def pickle_access(filename, mode='load', data=None):
+    """
+    input: string (filename), data, mode ('dump' or 'load')
+    """
+    if mode == 'dump':
+        f = open(filename, 'wb')
+        pickle.dump(data, f) 
+        f.close()
+    elif mode == 'load':
+        f = open(filename, 'rb')
+        data = pickle.load(f)
+        f.close()
+    return data
         
-def train(data, path):
+def preproc_wiki(data, path):
+    """
+    input: dictionary of wiki page contents
+    return: sentence tokens, tfidvec, tfidmatrix
+    """
     start = timeit.default_timer()
     sentence_tokens, word_tokens = tokenization(data)
-    f = open(path+"sentence_tokens.pickle", 'wb')
-    pickle.dump(sentence_tokens, f) 
-    f.close()
+    pickle_access(path+"sentence_tokens.pickle", mode='dump', data=sentence_tokens)
     TfidfVec = TfidfVectorizer(tokenizer=LemNormalize, stop_words='english')
     tfidf_train = TfidfVec.fit_transform(sentence_tokens)
-    # train timing
+    # feature extraction timing
     stop = timeit.default_timer()
-    print ("Training Time : ")
-    print (stop - start) 
-    f = open(path+"vector.pickle", 'wb')
-    pickle.dump(TfidfVec, f) 
-    f.close()
-    f = open(path+"matrix.pickle", 'wb')
-    pickle.dump(tfidf_train, f) 
-    f.close()
-        
-def response(user_input, path, sentence_tokens, tdif=True):
-    robot_response = ''
-    if tdif == True:
-        # load trained data
-        f = open(path+'vector.pickle','rb')
-        tfidf_vec = pickle.load(f)
-        f = open(path+'matrix.pickle', 'rb')
-        tfidf_matrix_train = pickle.load(f)
+    print (f"Wiki preprocessing Time: {stop-start}")
+    pickle_access(path+"vector.pickle", mode='dump', data=TfidfVec)
+    pickle_access(path+"matrix.pickle", mode='dump', data=tfidf_train)
+    return sentence_tokens, TfidfVec, tfidf_train
 
-        user_tokens = nltk.sent_tokenize(user_input)
-        tfidf_matrix_test = tfidf_vec.transform(user_tokens)
+def tokenize_input(text):
+    merged_text = text[:-1].replace('?', ',')
+    merged_text = merged_text.replace('.', ',')
+    merged_text = merged_text.replace('!', ',')
+    merged_text += text[-1]
+    merged_text.lower()
+    text_tokens = nltk.sent_tokenize(merged_text)
+    return text_tokens
 
+def preproc_sciq(parent_path, proj_path):
+    start = timeit.default_timer()
+    with open(parent_path+'/SciQ_dataset/train.json') as f:
+        sciq_train_data = json.load(f)
+    question_tokens = []
+    answer_tokens = []
+    choice_tokens = []
+    for i in range(len(sciq_train_data)):
+        answer = sciq_train_data[i]['support']
+        question_token = tokenize_input(sciq_train_data[i]['question'])
+        if answer != "":
+            answer_token = tokenize_input(answer)
+            question_tokens.extend(question_token)
+            answer_tokens.extend(answer_token)
+    pickle_access(proj_path+"question_tokens_train.pickle", mode='dump', data=question_tokens)
+    pickle_access(proj_path+"answer_tokens_train.pickle", mode='dump', data=answer_tokens)
+    stop = timeit.default_timer()
+    print (f"SciQ preprocessing Time: {stop-start}")
+    return question_tokens, answer_tokens
+    
+def batch(data, parent_path, proj_path, batch_size, input_dim, init=True):
+    if init == True:
+        # preprocess wiki dataset
+        sentence_tokens, TfidfVec, tfidf_wiki = preproc_wiki(data, proj_path)
+        # proprocess sciQ dataset
+        question_tokens, answer_tokens = preproc_sciq(parent_path, proj_path)
+    else:
+        TfidfVec = pickle_access(proj_path+"vector.pickle")
+        tfidf_wiki = pickle_access(proj_path+"matrix.pickle")
+        question_tokens = pickle_access(proj_path+"question_tokens_train.pickle")
+        answer_tokens = pickle_access(proj_path+"answer_tokens_train.pickle")
+
+    # generate sample
+    idx_all = list(range(len(question_tokens)))
+    idx_selected = random.sample(idx_all, batch_size)
+    vals_questions = []
+    vals_answers = [] 
+    for idx in idx_selected:
+        question_token = nltk.sent_tokenize(question_tokens[idx])
+        answer_token = nltk.sent_tokenize(answer_tokens[idx])
+
+        tfidf_question = TfidfVec.transform(question_token)
+        tfidf_answer = TfidfVec.transform(answer_token)
         # run cosine similarity between the 2 tf-idfs
-        vals = cosine_similarity(tfidf_matrix_test, tfidf_matrix_train)
-        # -1 is user_input
-        max_val = vals.max()
-        flat = vals.flatten()
+        vals_question = cosine_similarity(tfidf_question, tfidf_wiki)
+        vals_answer = cosine_similarity(tfidf_answer, tfidf_wiki)
+        # extract top 300 features
+        vals_idx_list = vals_question.argsort()[0][-2-input_dim:-2]
+
+        vals_question_sel = np.array([])
+        vals_answer_sel = np.array([])
+        for vals_idx in vals_idx_list:
+            vals_question_sel = np.append(vals_question_sel, vals_question[0][vals_idx])
+            vals_answer_sel = np.append(vals_answer_sel, vals_answer[0][vals_idx])
+        vals_question_sel = vals_question_sel.reshape(1, input_dim)
+        vals_answer_sel = vals_answer_sel.reshape(1, input_dim)
+
+        if vals_questions == [] or vals_answers == []:
+            vals_questions = vals_question_sel
+            vals_answers = vals_answer_sel
+        else:
+            vals_questions = np.append(vals_questions, vals_question_sel, axis=0)
+            vals_answers = np.append(vals_answers, vals_answer_sel, axis=0)
+    return torch.from_numpy(vals_questions).float(), torch.from_numpy(vals_answers).float()
+            
+def response(user_input, sentence_tokens, vals):
+    robot_response = ''
+    # -1 is user_input
+    max_val = vals.max()
+    flat = vals.flatten()
     if (max_val <= 0.3):
         robot_response += "Sorry, I can't understand you."
     else:
@@ -156,89 +224,69 @@ def response(user_input, path, sentence_tokens, tdif=True):
         robot_response += sentence
     return robot_response
 
-# def param_init(layer):
-#     if isinstance(layer, nn.Conv2d) or isinstance(layer, nn.ConvTranspose2d):
-#         torch.nn.init.normal_(layer.weight, 0.0, 0.02)
-#     if isinstance(layer, nn.BatchNorm2d):
-#         torch.nn.init.normal_(layer.weight, 0.0, 0.02)
-#         torch.nn.init.constant_(layer.bias, 0)
+def param_init(layer):
+    if isinstance(layer, nn.Linear):
+        torch.nn.init.uniform_(layer.weight)
+        layer.bias.data.fill_(0.01)
+    if isinstance(layer, nn.BatchNorm1d):
+        torch.nn.init.uniform_(layer.weight)
+        torch.nn.init.constant_(layer.bias, 0)
 
-# def calc_gradient_penalty(netD, real_data, fake_data, batch_size, img_length, device, gp_lambda, n_channels, lables):
-#     alpha = torch.rand(batch_size, 1)
-#     alpha = alpha.expand(batch_size, int(real_data.nelement() / batch_size)).contiguous()
-#     alpha = alpha.view(batch_size, n_channels, img_length, img_length)
-#     alpha = alpha.to(device)
+def batch_accuracy(preds, labels):
+    """
+    Returns accuracy per batch
+    """
+    point_accs = np.array([])
+    for point in range(len(preds)):
+        pred_array = preds[point].detach().numpy()
+        label_array = labels[point].detach().numpy()
+        difference = np.absolute(label_array - pred_array).flatten()
+        # considered correct prediction if difference < 0.02
+        n_correct = (difference < 0.02).sum()
+        point_acc = n_correct/len(difference)
+        point_accs = np.append(point_accs, point_acc)
+    return np.mean(point_accs)
 
-#     interpolates = alpha * real_data.detach() + ((1 - alpha) * fake_data.detach())
-#     interpolates = interpolates.to(device)
-#     interpolates.requires_grad_(True)
+def test(proj_path, nn, input_dim, device, question):
+    NN = nn(input_dim)
+    try:
+        NN.load_state_dict(torch.load(proj_path+'_net.pt'))
+    except:
+        NN = nn.DataParallel(NN)
+        NN.load_state_dict(torch.load(proj_path+'_net.pt'), False)
 
-#     disc_interpolates = netD(interpolates, lables)
-#     gradients = autograd.grad(outputs=disc_interpolates, inputs=interpolates,
-#                                   grad_outputs=torch.ones(disc_interpolates.size()).to(device),
-#                                   create_graph=True, only_inputs=True)[0]
+    NN.to(device)
 
-#     gradients = gradients.view(gradients.size(0), -1)
-#     gradient_penalty = ((gradients.norm(2, dim=1) - 1) ** 2).mean() * gp_lambda
-#     return gradient_penalty
+    # generate test input
+    TfidfVec = pickle_access(proj_path+"vector.pickle")
+    tfidf_wiki = pickle_access(proj_path+"matrix.pickle")
+    tfidf_question = TfidfVec.transform(nltk.sent_tokenize(question))
+    vals_question = cosine_similarity(tfidf_question, tfidf_wiki)
+    # feature extraction
+    vals_idx_list = vals_question.argsort()[0][-2-input_dim:-2]
 
-# def test(path, labels, netG, n_classes, z_dim=64, lf=4, device='cpu', ratio=2):
-#     '''
-#     Generate test images for the desired label
-#     Params:
-#         path: string, path to directory where the generator is stored
-#         labels: integer list, representing labels
-#         netG: empty generator class
-#         n_classes: integer
-#         z_dim: integer
-#         lf: integer, spatial dimension of input seed
-#         device: string
-#         ratio: integer, length/width ratio for generated image
-#     Return:
-#         tifs: numpy array of images
-#         netG: imported generator class
-#     '''
-#     try:
-#         netG.load_state_dict(torch.load(path + '_Gen.pt'))
-#     except:
-#         netG = nn.DataParallel(netG)
-#         netG.load_state_dict(torch.load(path + '_Gen.pt'))
-    
-#     netG.to(device)
-#     names = ['forest', 'desert', 'sea', 'star']
-#     tifs, raws = [], []
-#     # try to generate rectangular, instead of square images
-#     random = torch.randn(1, z_dim, lf, lf*ratio-2, device=device)
-#     noise = torch.zeros((1, z_dim, lf, lf*ratio)).to(device)
-#     for idx0 in range(random.shape[0]):
-#         for idx1 in range(random.shape[1]):
-#             for idx2 in range(random.shape[2]):
-#                 dim2 = random[idx0, idx1, idx2]
-#                 noise[idx0, idx1, idx2] = torch.cat((dim2, dim2[:2]), -1)
-#     netG.eval()
-#     test_labels = gen_labels(labels, n_classes)[:, :, None, None]
-#     for i in range(len(labels)):
-#         lbl = test_labels[i].repeat(1, 1, lf, lf*ratio).to(device)
-#         with torch.no_grad():
-#             img = netG(noise, lbl, Training=False, ratio=ratio).cuda()
-#             raws.append(img)
-#         print('Postprocessing')
-#         tif = torch.multiply(img, 255).cpu().detach().numpy()
-#         try:
-#             name = names[i]
-#         except:
-#             name = 'none'
-#         tifffile.imwrite(path + '_' + name + '.tif', tif)
-#         tifs.append(tif)
-#     return tifs, netG
+    vals_question_sel = np.array([])
+    for vals_idx in vals_idx_list:
+        vals_question_sel = np.append(vals_question_sel, vals_question[0][vals_idx])
+    vals_question_sel = vals_question_sel.reshape(1, input_dim)
 
-# def calc_eta(steps, time, start, i, epoch, num_epochs):
-#     elap = time - start
-#     progress = epoch * steps + i + 1
-#     rem = num_epochs * steps - progress
-#     ETA = rem / progress * elap
-#     hrs = int(ETA / 3600)
-#     mins = int((ETA / 3600 % 1) * 60)
-#     print('[%d/%d][%d/%d]\tETA: %d hrs %d mins'
-#           % (epoch, num_epochs, i, steps,
-#              hrs, mins))
+    NN.eval()
+    with torch.no_grad():
+        pred = NN(torch.from_numpy(vals_question_sel).float())
+
+    # post processing
+    pred = pred.detach().numpy()
+    for i in range(len(vals_idx_list)):
+        vals_question[0][vals_idx_list[i]] = pred[0][i]
+    return vals_question
+
+def calc_eta(steps, time, start, i, epoch, num_epochs):
+    elap = time - start
+    progress = epoch * steps + i + 1
+    rem = num_epochs * steps - progress
+    ETA = rem / progress * elap
+    hrs = int(ETA / 3600)
+    mins = int((ETA / 3600 % 1) * 60)
+    print('[%d/%d][%d/%d]\tETA: %d hrs %d mins'
+          % (epoch, num_epochs, i, steps,
+             hrs, mins))

@@ -14,4 +14,5 @@ Datasets: wikipedia pages for feature extraction and SciQ for model training
 - first set proj_name to the path of the trained model
 - locally by running the `openfabric-test/start.sh` 
 - on in a docker container using `openfabric-test/Dockerfile` 
+
 Robot can also be tested in command-line by running `openfabric-test/tdif_chatbot.py` 

@@ -1,3 +1,10 @@
+"""
+This file generates a dictionary of wiki pages around scientific topics.
+Upon running this file, the dictionary will be stored in /openfabric-test/code_files/wiki_data_full.pickle
+This dictionary will be later used in model training.
+"""
+
+
 import wikipedia
 import wikipediaapi
 import pickle

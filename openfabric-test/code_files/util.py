@@ -16,15 +16,15 @@ import os
 PATH = os.path.dirname(os.path.realpath(__file__))
 
 def mkdr(proj, proj_dir, Training, n=0):
-    '''
+    """
     Make project directories
-    Params:
+    input:
         proj: string, project name
         proj_dir: string, project directory
         Training: bool
-    Return:
+    return:
         string of where the project information will be stored
-    '''
+    """
     if Training:
         proj = proj + '_' + str(n)
         pth = proj_dir + proj
@@ -39,10 +39,18 @@ def mkdr(proj, proj_dir, Training, n=0):
         return pth + '/' + proj
 
 def LemTokens(tokens):
+    """
+    input: word tokens
+    return: list of lemmatised word tokens
+    """
     lemmer = nltk.stem.WordNetLemmatizer()
     return [lemmer.lemmatize(token) for token in tokens]
 
 def LemNormalize(text):
+    """
+    input: string
+    return: list of lemmatised word tokens
+    """
     remove_punc_dict = dict((ord(punct), None) for punct in string.punctuation)
     return LemTokens(nltk.word_tokenize(text.lower().translate(remove_punc_dict)))
 
@@ -77,6 +85,7 @@ def one_hot(sentence, word_dic):
 def tokenization(data):
     """
     input: dictionary of all wiki pages
+    return: tuple, (sentence_tokens, word_tokens)
     """
     # tokenisation
     all_pages = list(data)
@@ -88,6 +97,11 @@ def tokenization(data):
     return sentence_tokens, word_tokens
     
 def greet(sentence):
+    """
+    given user input, greet the user if condition is met
+    input: string, user input
+    return: string
+    """
     greet_inputs = ("hello", "hi", "hey", "whassup", "how are you?")
     greet_responses = ("hello", "hi", "Hey", "Hi there!", "Hey there!")
     for word in sentence.split():
@@ -96,6 +110,7 @@ def greet(sentence):
 
 def pickle_access(filename, mode='load', data=None):
     """
+    pickle.dump or pickle.load depending on mode
     input: string (filename), data, mode ('dump' or 'load')
     """
     if mode == 'dump':
@@ -118,7 +133,7 @@ def preproc_wiki(data, path):
     pickle_access(path+"sentence_tokens.pickle", mode='dump', data=sentence_tokens)
     TfidfVec = TfidfVectorizer(tokenizer=LemNormalize, stop_words='english')
     tfidf_train = TfidfVec.fit_transform(sentence_tokens)
-    # feature extraction timing
+    # feature extraction time
     stop = timeit.default_timer()
     print (f"Wiki preprocessing Time: {stop-start}")
     pickle_access(path+"vector.pickle", mode='dump', data=TfidfVec)
@@ -126,15 +141,25 @@ def preproc_wiki(data, path):
     return sentence_tokens, TfidfVec, tfidf_train
 
 def tokenize_input(text):
-    merged_text = text[:-1].replace('?', ',')
-    merged_text = merged_text.replace('.', ',')
-    merged_text = merged_text.replace('!', ',')
+    """
+    merge given text to a single sentence
+    input: string
+    return: sentence tokens
+    """
+    merged_text = text[:-1].replace('?', ';')
+    merged_text = merged_text.replace('.', ';')
+    merged_text = merged_text.replace('!', ';')
     merged_text += text[-1]
     merged_text.lower()
     text_tokens = nltk.sent_tokenize(merged_text)
     return text_tokens
 
 def preproc_sciq(parent_path, proj_path):
+    """
+    preprocess SciQ training dataset
+    input: string, string
+    return: tuple, (sentence tokens of questions, sentence tokens of answers)
+    """
     start = timeit.default_timer()
     with open(parent_path+'/SciQ_dataset/train.json') as f:
         sciq_train_data = json.load(f)
@@ -148,6 +173,7 @@ def preproc_sciq(parent_path, proj_path):
             answer_token = tokenize_input(answer)
             question_tokens.extend(question_token)
             answer_tokens.extend(answer_token)
+    # save preprocessed data
     pickle_access(proj_path+"question_tokens_train.pickle", mode='dump', data=question_tokens)
     pickle_access(proj_path+"answer_tokens_train.pickle", mode='dump', data=answer_tokens)
     stop = timeit.default_timer()
@@ -155,6 +181,18 @@ def preproc_sciq(parent_path, proj_path):
     return question_tokens, answer_tokens
     
 def batch(data, parent_path, proj_path, batch_size, input_dim, init=True):
+    """
+    return batch of training data & labels
+    input:
+        data: dictionary, wiki pages
+        parent_path: string
+        proj_path: string
+        batch_size: int
+        input_dim: int
+        init: bool
+    return:
+        tuple of torch tensors (features, labels)
+    """
     if init == True:
         # preprocess wiki dataset
         sentence_tokens, TfidfVec, tfidf_wiki = preproc_wiki(data, proj_path)
@@ -200,6 +238,14 @@ def batch(data, parent_path, proj_path, batch_size, input_dim, init=True):
     return torch.from_numpy(vals_questions).float(), torch.from_numpy(vals_answers).float()
             
 def response(user_input, sentence_tokens, vals):
+    """
+    input:
+        user_input: string
+        sentence_tokens: list
+        vals: np.array
+    return:
+        string
+    """
     robot_response = ''
     # -1 is user_input
     max_val = vals.max()
@@ -234,7 +280,9 @@ def param_init(layer):
 
 def batch_accuracy(preds, labels):
     """
-    Returns accuracy per batch
+    Returns accuracy per batch in percentage
+    input: torch tensors
+    return: float
     """
     point_accs = np.array([])
     for point in range(len(preds)):
@@ -248,6 +296,17 @@ def batch_accuracy(preds, labels):
     return np.mean(point_accs)
 
 def test(proj_path, nn, input_dim, device, question):
+    """
+    generate top vals using trained NN
+    input:
+        proj_path: string
+        nn: torch.nn.Module class
+        input_dim: int
+        devide: 'cpu' or 'cuda'
+        question: string
+    return:
+        np.array
+    """
     NN = nn(input_dim)
     try:
         NN.load_state_dict(torch.load(proj_path+'_net.pt'))
@@ -281,6 +340,9 @@ def test(proj_path, nn, input_dim, device, question):
     return vals_question
 
 def calc_eta(steps, time, start, i, epoch, num_epochs):
+    """
+    print training pogress
+    """
     elap = time - start
     progress = epoch * steps + i + 1
     rem = num_epochs * steps - progress

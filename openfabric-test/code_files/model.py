@@ -32,15 +32,20 @@ def train(parent_path, proj_path, NN, wiki_data, num_epochs, batch_size, input_d
     for epoch in range(num_epochs):
         for i in range(iters):
             labels, features = batch(wiki_data, parent_path, proj_path, batch_size, input_dim, init=False)
-            opt.zero_grad()                                         # zero gradients
+            # zero gradients
+            opt.zero_grad()                                         
             preds = net(features)
-            loss = criterion(preds, labels)                    # compute loss
-            acc = batch_accuracy(preds, labels)               # compute accuracy of predictions       
-            loss.backward()                                               # find rate of change of loss wrt model weights
-        
-            opt.step()                                              # update the model weights
-        
-            iter_loss += loss.item()                                     # accumulate loss
+            # compute loss
+            loss = criterion(preds, labels)                    
+            # compute accuracy of predictions
+            acc = batch_accuracy(preds, labels)                     
+            # find rate of change of loss wrt model weights 
+            loss.backward()                                               
+            # update the model weights
+            opt.step()                                              
+
+            # accumulate loss
+            iter_loss += loss.item()                                     
             iter_acc += acc.item()   
             calc_eta(iters, time.time(), start, i, epoch, num_epochs)
 

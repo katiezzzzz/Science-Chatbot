@@ -1,5 +1,6 @@
 import os
 import warnings
+import numpy as np
 from code_files import *
 from ontology_dc8f06af066e4a7880a5938933236037.simple_text import SimpleText
 
@@ -23,15 +24,16 @@ def execute(request: SimpleText, ray: OpenfabricExecutionRay) -> SimpleText:
     PATH = os.path.dirname(os.path.realpath(__file__))
     PATH += "/"
 
+    ngpu = 1
     Training = False
     Project_name = 'tdif_0'
     Project_dir = PATH + 'trained/'
     Proj_path = mkdr(Project_name, Project_dir, Training)
 
+    device = torch.device("cuda:0" if(torch.cuda.is_available() and ngpu > 0) else "cpu")
     sentence_tokens = pickle_access(Proj_path+'sentence_tokens.pickle')
     NN = basic_nn()
-    device = torch.device("cuda:0" if(torch.cuda.is_available() and ngpu > 0) else "cpu")
-
+    
     output = []
     for text in request.text:
         response = ''

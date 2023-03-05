@@ -1,3 +1,7 @@
+"""
+train a basic nn using tdif features
+"""
+
 from code_files import *
 import numpy as np
 import os
